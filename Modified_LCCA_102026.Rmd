@@ -1,0 +1,387 @@
+---
+title: "Update and modification to the LCCAselection package"
+author: "(AC) 2026"
+date: "2026-04-27"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+This code is an update based on the work of Lezhnina & Kismihók (2022). !!! Please cite and credit their original work !!! : Olga Lezhnina, Gábor Kismihók, Latent Class Cluster Analysis: Selecting the number of clusters, MethodsX, Volume 9, 2022, 101747, ISSN 2215-0161, <https://doi.org/10.1016/j.mex.2022.101747>. (<https://www.sciencedirect.com/science/article/pii/S2215016122001273>)
+
+Please also consider their work (including original code) for their recommendations on missing data and test data to run and test their LCCASelection implementation and the modified code provided below.
+
+Many thanks go to Dr. Lezhnina and Dr. Kismihók for their work and their support :)
+
+```{r setup, include=FALSE}
+#If not already installed, install packages first
+library(tidyverse)
+library(haven)
+library(car)
+library(misty)
+library(psych)
+library(viridis)
+library(plyr)
+library(likert)
+library(cluster)
+library(factoextra)
+library(reshape2)
+library(VarSelLCM)
+library(clue)
+library(MedDataSets)
+```
+
+How to proceed:
+The chunk "functions LCA" contains the suggested functions to use LCA. The functions are directly applied on example data from Lezhnina & Kismihók. These only work if that data are loaded into the environment. 
+
+First, run the functions. Then, get yourself the mentioned example data.
+Another example application is provided in the second chunk.
+
+
+```{r functions LCA, echo=T}
+
+##### LCCASelection function - modified #####
+# This is a slightly modified version, heavily based on the work of Lezhnina & Kismihók. 
+# This modification simply adds the % of ambiguous posteriors and the average maximum posterior to the elbow plots. 
+# Thresholdambiguous = threshold for ambiguity
+# ShareASWsample = Share of sample to use for ASW calculation. Takes a random sample equivalent to the % specified. 
+# Results should be saved in an object, from which the following can be indexed: $table -> results table; $plot_main -> plots information criteria (elbow plot); $plot_aswsample -> ASW in elbow plot; $asw_sample_index -> index of random sample used for ASW (if constrained by computational performance, else use all the data with a share of 100% [ShareASWsample==1])
+# 
+#
+# Please use the code from Lezhnina & Kismihók (2022) to generate test data (dataPos), it is used in the following to test the functions and recreate their examples. 
+
+
+
+LCCAselection <- function(data, ShareASWsample=1, Thresholdambiguous=0.7){
+  for (j in 1:ncol(data)) {
+    if (identical(class(data[, j]), "factor") == FALSE)
+      stop('non-factor column(s) in the data')
+  }
+  
+  if(ShareASWsample<0||ShareASWsample>1){
+     stop("ShareASWsample must be a single numeric probability between 0 and 1 (inclusive).")
+  }
+  
+  if(Thresholdambiguous<0||Thresholdambiguous>1){
+     stop("Thresholdambiguous must be a single numeric probability between 0 and 1 (inclusive).")
+  }
+  
+  randomindex<-sample(seq_len(nrow(data)),ShareASWsample*nrow(data))
+  mydaisy <- daisy(data[randomindex,], metric="gower")
+  result <- data.frame(matrix(nrow = 10, ncol = 7))
+  colnames(result) <- c("Model", "BIC", "ICL", "maxPost","ambiguous","AIC","ASW")
+  clustfun <- function(i) {
+    clust <- VarSelCluster(data, gvals = i, vbleSelec = FALSE)
+    result[i, 1] <<- i
+    result[i, 2] <<- -2 * clust@criteria@BIC
+    result[i, 3] <<- clust@criteria@ICL
+    result[i,4] <<-clust@partitions@tik %>% apply(1,max) %>% mean()
+    maxP<-clust@partitions@tik %>% apply(1,max)
+    result[i,5] <<-mean(maxP<Thresholdambiguous)
+    result[i,6] <<- -2*clust@criteria@AIC
+    result[i, 7] <<- summary(silhouette(clust@partitions@zMAP[randomindex], dist = mydaisy))[4]
+  }
+  lapply(1:10, clustfun)
+  result$Model <- as.factor(result$Model)
+  result$BIC <- round(result$BIC, 2)
+  result$ICL <- round(result$ICL, 2)
+  result$AIC<-round(result$AIC,2)
+  result$maxPost <- round(as.numeric(result$maxPost), 2)
+  result$ambiguous<-round(as.numeric(result$ambiguous), 2)
+  #plot 1 without ASW random sample
+  mm1 <- melt(subset(result, select = c(Model, BIC, maxPost,ambiguous)), id.var = "Model")
+  plt1 <- ggplot(mm1, aes(x = Model, y = value, group = 1)) +
+    facet_grid(variable ~ ., scales = "free_y") +
+    geom_line(aes(color = variable), lwd = 1) +
+    theme(legend.position = "bottom") +
+    geom_vline(aes(xintercept = which.max(result$ICL), linetype = "min_ICL"), size = 0.7) +
+    geom_vline(aes(xintercept = which.min(result$BIC), linetype = "min_BIC"), size = 0.7) +
+    geom_vline(aes(xintercept = which.min(result$AIC), linetype = "min_AIC"), size = 0.7) +
+    
+    guides(colour = F) +
+    scale_linetype_manual(
+      name = "Index",
+      values = c("min_ICL" = "dotdash", "min_BIC" = "dotted","min_AIC"="dashed"))
+    
+    #plot 2 with ASW random sample only
+    mm2 <- melt(subset(result, select = c(Model, ASW)), id.var = "Model")
+    plt2 <- ggplot(mm2, aes(x = Model, y = value, group = 1)) +
+    facet_grid(variable ~ ., scales = "free_y") +
+    geom_line(aes(color = variable), lwd = 1) +
+    theme(legend.position = "bottom") +
+    geom_vline(aes(xintercept = which.max(result$ICL), linetype = "min_ICL"), size = 0.7) +
+    geom_vline(aes(xintercept = which.min(result$BIC), linetype = "min_BIC"), size = 0.7) +
+    geom_vline(aes(xintercept = which.min(result$AIC), linetype = "min_AIC"), size = 0.7) +
+    
+    guides(colour = F) +
+    scale_linetype_manual(
+      name = "Index",
+      values = c("min_ICL" = "dotdash", "min_BIC" = "dotted","min_AIC"="solid"))
+  
+  
+  list(
+    table=result,
+    plot_main=plt1,
+    plot_aswsample=plt2,
+    asw_sample_index=randomindex)
+  #randomindex output to guarantee a new sample doesnt contain the same individuals!
+}
+
+LCCAselection(dataPos,1,0.5)
+
+
+#### Validation ####
+# Validation function - updated with the "clue" package for Jaccard coefficient. Also includes a little add-on displaying the resampling (bootstrap) iteration
+valfuncvalidation(dataPos[1:1000,],dataPos[1001:2271,], 4,10)
+valfuncvalidation_fixed(dataPos[1:1000,],dataPos[1001:2271,], 4)
+
+valfunc <- function(data, k, n){
+  resval <- data.frame(matrix(nrow = n, ncol = 2))
+  colnames(resval) <- c("ARI", "Jaccard")
+  mod <- VarSelCluster(data, gvals = k, vbleSelec = FALSE)
+  
+  fun <- function(i){
+    bsampN <- sample(nrow(data),replace=TRUE)
+    dataN <- data[bsampN, ]
+    modN <- VarSelCluster(dataN, gvals = k, vbleSelec = FALSE)
+    partN <- VarSelLCM::predict(mod, dataN, type = "partition")
+    arival <- ARI(partN, modN@partitions@zMAP)
+    jcval <- clue::cl_agreement(as.cl_partition(partN), as.cl_partition(modN@partitions@zMAP), method = "Jaccard")
+    resval[i, 1] <<- arival
+    resval[i, 2] <<- jcval
+    cat("Progress: resample number:",i,"\n")
+  }
+  lapply(1:n, fun)
+  return(colMeans(resval))
+}
+
+
+# Validation function - adapted to calculate ARI and Jaccard coefficients using resampling of training data. Agreement coefficients are then applied to a agreement between training and validation sample (for example, a randomly drawn set from the data). Has to be separate from training data. 
+
+valfuncvalidation <- function(data_validation, data_training, k, n){
+  if(identical(data_validation, data_training)){
+      stop("'data_validation' and 'data_training' appear to be the same dataset. 
+    Please provide separate datasets - use either a random train/validation split 
+    or an external validation dataset.")
+  }
+  resval <- data.frame(matrix(nrow = n, ncol = 2))
+  colnames(resval) <- c("ARI", "Jaccard")
+  mod <- VarSelCluster(data_training, gvals = k, vbleSelec = FALSE)
+  
+  fun <- function(i){
+    bsampN <- sample(nrow(data_validation),replace=TRUE)
+    dataN <- data_validation[bsampN, ]
+    modN <- VarSelCluster(dataN, gvals = k, vbleSelec = FALSE)
+    partN <- VarSelLCM::predict(mod, dataN, type = "partition")
+    arival <- ARI(partN, modN@partitions@zMAP)
+    jcval <- clue::cl_agreement(as.cl_partition(partN), as.cl_partition(modN@partitions@zMAP), method = "Jaccard")
+    resval[i, 1] <<- arival
+    resval[i, 2] <<- jcval
+    cat("Progress: resample number:",i,"\n")
+  }
+  lapply(1:n, fun)
+  return(colMeans(resval))
+}
+
+# Validation function - adapted to calculate the same coefficients, but on the 
+# fixed samples (Meaning training and validation). Else, the same requirements apply. 
+
+valfuncvalidation_fixed <- function(data_validation, data_training, k){
+  
+   if(identical(data_validation, data_training)){
+      stop("'data_validation' and 'data_training' appear to be the same dataset. 
+    Please provide separate datasets - use either a random train/validation split 
+    or an external validation dataset.")
+   }
+  
+  mod_training <- VarSelCluster(data_training, gvals = k, vbleSelec = FALSE)
+  mod_validation <- VarSelCluster(data_validation, gvals = k, vbleSelec = FALSE)
+  part_project <- VarSelLCM::predict(mod_training, data_validation, type = "partition")
+  
+  arival <- ARI(part_project, mod_validation@partitions@zMAP)
+  jcval <- clue::cl_agreement(as.cl_partition(part_project), as.cl_partition(mod_validation@partitions@zMAP), method = "Jaccard")
+    
+  return(data.frame(ARI=arival,Jaccard=jcval))
+    }
+
+## Whats the difference between these?
+# valfunc: takes bootstrap samples from the training data and compares the stability metrics by re-using the partition estimated from the training data on each bootstrap sample.
+# valfuncvalidation: takes bootstrap samples from the validation data and compares the stability metrics by re-using the partition from the training data on each bootstrap sample from the validation data 
+# valfuncvalidation_fixed: Does not use bootstrapping. Directly calculates the stability metrics of the validation data on the partition estimated from training data.
+
+
+
+# Average latent class posterior probability - calculates this class-wise as well as averaged across all classes.
+
+test<-VarSelCluster(dataPos,4)
+ALCPP(test)
+
+ALCPP<-function(Clustersol){
+  tik<-Clustersol@partitions@tik
+  z_class<-Clustersol@partitions@zMAP
+  
+  AvePP_crossclass<-mean(tik[cbind(seq_along(z_class), z_class)])
+  
+AvePP_by_class <- sapply(seq_len(ncol(tik)), function(g) {
+  mean(tik[z_class == g, g], na.rm = TRUE)
+})
+
+  list(
+    AvePP_crossclass = AvePP_crossclass,
+    AvePP_by_class   = AvePP_by_class
+  )
+}
+
+
+lgraph<-linegraph(test, dataPos)
+lgraph$profileplot
+lgraph$profiledata
+
+# Linegraph to reproduce a similar linegraph as presented in the work of Lezhnina & Kismihók. Also produces the data used for plotting
+
+linegraph<-function(Csolution, data_used){
+  
+  variables_used<-names(data_used)
+
+  linemodel<-reshape2::melt(Csolution@param@paramCategorical@alpha)
+  linemodeldata<-data.frame(ClusterID=Csolution@partitions@zMAP, Csolution@data@dataCategorical@data)
+  linemodeldata<-linemodeldata %>% sapply(as.numeric) %>% as.data.frame()
+
+  cluster_means <- linemodeldata %>%
+    dplyr::group_by(ClusterID) %>%
+   dplyr::summarise(
+     dplyr::across(all_of(variables_used), ~ mean(.x, na.rm = TRUE))
+   )
+
+    plotdata<-melt(cluster_means, id.vars=c("ClusterID"))
+    cluster_number<-plotdata$ClusterID %>% unique() %>% length()
+      lineplot<-ggplot(plotdata,aes(group=as.factor(ClusterID), x=variable, y=value, color=as.factor(ClusterID)))+geom_line()+labs(subtitle=cat("Solution to profiles with clusters: k=",cluster_number))
+  
+      list(profileplot=lineplot,
+           profiledata=plotdata)
+}
+
+
+#### Experimental: Discriminiative-Power-Weighted Average Indicator Class Plots (Profile plots) ####
+
+# This approach is self-designed, and experimental! Basically, we just scale the average indicator values by the relative discriminative power. This may be useful internally, for interpretation and further insight into the data. The function below takes one cluster solution and the pre-formatted data  from the  "linegraph" function above. A factor can be placed before the plotting in the function to adapt variable names, and the ggplot itself can have a manually scaled color added. You can just use the pre-commented "scale_color_manual". Again, use this rather cautiously. One limitation here is that the Y-Axis is transformed rather arbitrarily, and we did not implement a normalization step yet.
+
+weighted_linegraph<-function(Csolution, plotdata){
+  
+Discrim_values<-data.frame(indicator=names(Csolution@criteria@discrim), Discriminativepower=unname(Csolution@criteria@discrim))
+Discrim_values<-Discrim_values%>% mutate(Discrim_scaled=Discriminativepower/sum(Discriminativepower))
+  
+#create a factor for the relevant variable here to set variable names
+
+scaledlinemodeldata<-full_join(Discrim_values, plotdata, by=c("indicator"="variable"))
+scaledlinemodeldata<-scaledlinemodeldata %>% mutate(scaledvalue=value*Discrim_scaled)
+
+plot_weighted<-ggplot(scaledlinemodeldata,aes(group=ClusterID, x=indicator, y=scaledvalue, color=as.factor(ClusterID)))+geom_line(size=1.2)+theme(axis.text.x = element_text(angle = 45, hjust = 1))+labs(x="Variable",y="Weighted class indicator", color="Class")+guides(fill=guide_legend(order=1))#+  scale_color_manual(values = cols_solutions)
+list(weightedprofileplot=plot_weighted,
+           weightedprofiledata=scaledlinemodeldata)
+
+}
+     
+
+```
+
+We show a short example on how to use the code using the Aids2_df from the MedDataSets package. However, this example may not be optimal.
+
+For example, we see some very small class prevalences. For further practical advice, see for example Lezhnina & Kismihók (2022). Hence, the following is only to be considered for demonstrative purposes!
+
+```{r example with Aids2_df, echo=T}
+
+Aids_df<-MedDataSets::Aids2_df
+
+glimpse(Aids_df)
+
+Aids_df <-Aids_df %>% select(-c(diag, death))
+
+#Lets categorize Age brakets by quantiles:
+quantile(Aids_df$age, c(0.25,0.5,0.75))
+Aids_df<-Aids_df %>% mutate(age=case_when(
+  age<30~"1",
+  age>=30 & age<43~"2",
+  age>=43~"3"
+) %>% as.factor)
+
+# The whole thing works best if we eliminate or handle missing data first and
+# the whole data frame is coded as numeric factors:
+
+# A quick inspection:
+
+lapply(Aids_df, table)
+colSums(is.na(Aids_df))
+#Great, no missings
+
+# Format data
+
+Aids_df[] <- lapply(Aids_df, function(x) as.factor(as.numeric(x))) %>% as.data.frame()
+
+# First, we split the data (if we wish to validate that way)
+
+set.seed(123)
+
+Index_validation<-sample(x=seq(from=1, to=2843, by=1), size=1991,replace=F)
+
+Aids_training<-Aids_df[Index_validation,]
+Aids_validation<-Aids_df[-Index_validation,]
+
+# Step one: Cluster solutions
+
+Res_training<-LCCAselection(Aids_training,ShareASWsample=1, Thresholdambiguous = 0.7)
+
+# Lets inspect and select the number of clusters by referencing the table and plots:
+
+Res_training$table
+Res_training$plot_main
+Res_training$plot_aswsample
+
+# Lets settle for k=3 and continue with the other functions - namely 
+# bootstrapped internal Stability with ARI and Jaccard
+# CAVE: Careful selection of feasible cluster number is pivotal and 
+# usually involves multiple steps!
+# Here, we chose the first best "k" to demonstrate the functions.
+
+valfunc(Aids_training, k=3, n=20)
+
+# If we are happy with these metrics (and we might compute and compare multiple "k"), we 
+# continue with other functions, for example the internal bootstrapped agreement
+# between training and validation splits:
+
+valfuncvalidation(Aids_training, Aids_validation, k=3, n=20)
+
+# As well as the fixed sample approach:
+
+valfuncvalidation_fixed(Aids_training, Aids_validation, k=3)
+
+# Which can also be used to compare agreement between original vs. solution 
+# from perturbed data
+# We did not include a perturbation function, as perturbation is 
+# very specific to the data at hand.
+
+# We are happy with these results and now consider the Average Latent Class 
+# Posterior Probability across all classes and for each class:
+
+Result_k3_training<-VarSelCluster(Aids_training, gvals=3, vbleSelec=FALSE)
+ALCPP(Result_k3_training)
+
+# Now we plot the profile plot, and inspect the aggregated data:
+
+Profileplot_training<-linegraph(Result_k3_training, Aids_training)
+Profileplot_training$profiledata
+Profileplot_training$profileplot
+
+# Additionally, we can use the weighted version like this: 
+
+Weightedresult<-weighted_linegraph(Result_k3_training, Profileplot_training$profiledata)
+Weightedresult$weightedprofiledata
+Weightedresult$weightedprofileplot
+
+# However, also consider the item probability plots. 
+# Code available from Lezhnina & Kismihók (2022)
+
+```
+
+# The End
+For any questions, queries or anything else: contact me on GitHub!
