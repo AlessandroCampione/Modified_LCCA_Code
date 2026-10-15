@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this code or a modified version in your research, please cite it using these metadata."
+message: "If you use this code or a modified version in your research, please cite it using these metadata. Also cite the original work: Olga Lezhnina, Gábor Kismihók, Latent Class Cluster Analysis: Selecting the number of clusters, MethodsX, Volume 9, 2022, 101747, ISSN 2215-0161, <https://doi.org/10.1016/j.mex.2022.101747>. (<https://www.sciencedirect.com/science/article/pii/S2215016122001273>)"
 type: software
 title: "Modified LCCA"
 authors:
