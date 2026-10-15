@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use this code or a modified version in your research, please cite it using these metadata."
+type: software
+title: "Modified LCCA"
+authors:
+  - family-names: "Campione"
+    given-names: "Alessandro"
+repository-code: "https://github.com/Alessiolo/Modified_LCCA_Code"
